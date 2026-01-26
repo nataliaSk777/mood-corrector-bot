@@ -34,10 +34,10 @@ function getUser(db, userId) {
   if (!db.users[userId]) {
     db.users[userId] = {
       chatId: null,
-      state: 'idle',          // idle | waiting_intensity | waiting_label | waiting_topic | waiting_choice
-      mode: null,             // support | correct | clarity
+      state: 'idle',
+      mode: null,
       last: {
-        intensity: null,      // 0..10
+        intensity: null,
         label: null,
         topic: null,
         choice: null
@@ -61,6 +61,11 @@ const mainMenu = Markup.inlineKeyboard([
   [Markup.button.callback('🟡 Коррекция', 'mode_correct')],
   [Markup.button.callback('🔵 Ясность', 'mode_clarity')],
   [Markup.button.callback('🧾 Чек-ин', 'checkin')]
+]);
+
+const gentleMenu = Markup.inlineKeyboard([
+  [Markup.button.callback('Я просто здесь', 'just_here')],
+  [Markup.button.callback('Сделать чек-ин', 'checkin')]
 ]);
 
 function intensityKeyboard() {
@@ -94,57 +99,25 @@ function dailyPromptText() {
 
 // ---- Команды ----
 bot.start(async (ctx) => {
-  // запомним chatId сразу, чтобы можно было писать в этот чат из cron
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
   u.chatId = ctx.chat.id;
   saveDb(db);
 
   await ctx.reply(
-    'Я твой корректор настроения.\n\nКоманда: /checkin\nЕжедневный чек-ин: /daily_on и /daily_off',
+    'Я твой корректор настроения.\n\n' +
+    'Мне можно писать просто словами: «утро», «вечер», «что-то не так».\n' +
+    'Если захочешь — я предложу чек-ин.\n\n' +
+    'Команда: /checkin\nЕжедневный чек-ин: /daily_on и /daily_off',
     mainMenu
   );
 });
 
-bot.command('checkin', async (ctx) => {
-  const db = loadDb();
-  const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-  u.state = 'idle';
-  u.mode = null;
-  saveDb(db);
-
-  await ctx.reply(
-    'Чек-ин. Сначала пауза.\n\nСделай один спокойный вдох.\nКогда будешь готова — выбери режим:',
-    mainMenu
-  );
-});
-
-bot.command('daily_on', async (ctx) => {
-  const db = loadDb();
-  const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-  u.daily.enabled = true;
-  saveDb(db);
-
-  await ctx.reply('Ок. Включила ежедневный чек-ин ✅\nЧтобы выключить: /daily_off');
-});
-
-bot.command('daily_off', async (ctx) => {
-  const db = loadDb();
-  const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-  u.daily.enabled = false;
-  saveDb(db);
-
-  await ctx.reply('Ок. Ежедневный чек-ин выключен ✅\nЧтобы включить: /daily_on');
-});
-
+// ---- Чек-ин ----
 bot.action('checkin', async (ctx) => {
   await ctx.answerCbQuery();
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
   u.state = 'idle';
   u.mode = null;
   saveDb(db);
@@ -152,13 +125,20 @@ bot.action('checkin', async (ctx) => {
   await ctx.reply(dailyPromptText(), mainMenu);
 });
 
+// ---- Мягкая реакция на "просто быть" ----
+bot.action('just_here', async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    'Хорошо. Я рядом.\n\nЕсли вдруг захочется ясности или поддержки — ты знаешь, где кнопка.',
+    mainMenu
+  );
+});
+
 // ---- Выбор режима ----
 bot.action('mode_support', async (ctx) => {
   await ctx.answerCbQuery();
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
   u.mode = 'support';
   u.state = 'waiting_intensity';
   saveDb(db);
@@ -170,8 +150,6 @@ bot.action('mode_correct', async (ctx) => {
   await ctx.answerCbQuery();
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
   u.mode = 'correct';
   u.state = 'waiting_intensity';
   saveDb(db);
@@ -183,8 +161,6 @@ bot.action('mode_clarity', async (ctx) => {
   await ctx.answerCbQuery();
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
   u.mode = 'clarity';
   u.state = 'waiting_intensity';
   saveDb(db);
@@ -199,10 +175,9 @@ bot.action(/^int_(\d{1,2})$/, async (ctx) => {
 
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
 
   if (u.state !== 'waiting_intensity') {
-    await ctx.reply('Ок. Начни с /checkin');
+    await ctx.reply('Если хочешь — начни с чек-ина.', mainMenu);
     return;
   }
 
@@ -210,21 +185,25 @@ bot.action(/^int_(\d{1,2})$/, async (ctx) => {
   u.state = 'waiting_label';
   saveDb(db);
 
-  await ctx.reply(
-    'Одним-двумя словами: как это называется сейчас?\nПримеры: тревога, усталость, злость, пустота, нежность.'
-  );
+  await ctx.reply('Одним-двумя словами: как это называется сейчас?');
 });
 
-// ---- Текстовые шаги ----
+// ---- ТЕКСТ ----
 bot.on('text', async (ctx) => {
   const text = String(ctx.message.text || '').trim();
-  if (!text) return;
+  if (!text || text.startsWith('/')) return;
 
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
 
-  if (text.startsWith('/')) return;
+  // 👉 НОВОЕ: короткие сообщения в idle
+  if (u.state === 'idle' && text.length <= 20) {
+    await ctx.reply(
+      `Вижу: «${text}».\n\nХочешь просто отметить состояние или сделаем чек-ин?`,
+      gentleMenu
+    );
+    return;
+  }
 
   if (u.state === 'waiting_label') {
     u.last.label = text.slice(0, 64);
@@ -236,27 +215,7 @@ bot.on('text', async (ctx) => {
 
   if (u.state === 'waiting_topic') {
     u.last.topic = text.slice(0, 180);
-    const reflect = shortReflect(u.last.label || 'что-то', u.last.intensity ?? 0);
-
-    if (u.mode === 'support') {
-      u.state = 'idle';
-      u.history.push({ at: nowIso(), mode: u.mode, intensity: u.last.intensity, label: u.last.label, topic: u.last.topic });
-      if (u.history.length > 60) u.history.shift();
-      saveDb(db);
-
-      await ctx.reply(
-        `${reflect}\n\nСейчас сделай так:\n1) Ноги в пол.\n2) Плечи вниз.\n3) Длинный выдох.\n\n${closingLine('support')}`,
-        mainMenu
-      );
-      return;
-    }
-
-    if (u.mode === 'correct') {
-      u.state = 'waiting_choice';
-      saveDb(db);
-      await ctx.reply(`${reflect}\n\nХочешь остаться с этим или сделать на 5% мягче?`, choiceKeyboard);
-      return;
-    }
+    const reflect = shortReflect(u.last.label, u.last.intensity);
 
     u.state = 'idle';
     u.history.push({ at: nowIso(), mode: u.mode, intensity: u.last.intensity, label: u.last.label, topic: u.last.topic });
@@ -264,60 +223,13 @@ bot.on('text', async (ctx) => {
     saveDb(db);
 
     await ctx.reply(
-      `${reflect}\n\nОдин вопрос на ясность:\nЧто мне важно защитить или сохранить прямо сейчас?\n\n${closingLine('clarity')}`,
+      `${reflect}\n\n${closingLine(u.mode)}`,
       mainMenu
     );
     return;
   }
 
-  await ctx.reply('Я тут. Если хочешь — начни с /checkin', mainMenu);
-});
-
-// ---- Выбор в коррекции ----
-bot.action('choice_stay', async (ctx) => {
-  await ctx.answerCbQuery();
-  const db = loadDb();
-  const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
-  if (u.state !== 'waiting_choice' || u.mode !== 'correct') {
-    await ctx.reply('Ок. Начни с /checkin');
-    return;
-  }
-
-  u.last.choice = 'stay';
-  u.state = 'idle';
-  u.history.push({ at: nowIso(), mode: u.mode, intensity: u.last.intensity, label: u.last.label, topic: u.last.topic, choice: u.last.choice });
-  if (u.history.length > 60) u.history.shift();
-  saveDb(db);
-
-  await ctx.reply(
-    `Хорошо. Тогда без “чинить”.\n\nСделай 3 дыхания: вдох — короче, выдох — длиннее.\nИ скажи себе: «Я могу это выдержать без спешки».\n\n${closingLine('correct')}`,
-    mainMenu
-  );
-});
-
-bot.action('choice_soften', async (ctx) => {
-  await ctx.answerCbQuery();
-  const db = loadDb();
-  const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
-  if (u.state !== 'waiting_choice' || u.mode !== 'correct') {
-    await ctx.reply('Ок. Начни с /checkin');
-    return;
-  }
-
-  u.last.choice = 'soften';
-  u.state = 'idle';
-  u.history.push({ at: nowIso(), mode: u.mode, intensity: u.last.intensity, label: u.last.label, topic: u.last.topic, choice: u.last.choice });
-  if (u.history.length > 60) u.history.shift();
-  saveDb(db);
-
-  await ctx.reply(
-    `Ок, делаем 5% мягче.\n\nМикро-действие на 60 секунд:\n1) Назови 3 предмета вокруг.\n2) Почувствуй опору под стопами.\n3) Один длинный выдох.\n\n${closingLine('correct')}`,
-    mainMenu
-  );
+  await ctx.reply('Я здесь.', mainMenu);
 });
 
 // ---- Отмена ----
@@ -325,13 +237,11 @@ bot.action('cancel', async (ctx) => {
   await ctx.answerCbQuery();
   const db = loadDb();
   const u = getUser(db, String(ctx.from.id));
-  u.chatId = ctx.chat.id;
-
   u.state = 'idle';
   u.mode = null;
   saveDb(db);
 
-  await ctx.reply('Ок, отменили. Если надо — /checkin', mainMenu);
+  await ctx.reply('Ок. Если понадобится — я рядом.', mainMenu);
 });
 
 bot.launch().then(() => console.log('Bot started'));
