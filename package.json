@@ -4,7 +4,8 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "cron": "node cron.js"
   },
   "dependencies": {
     "telegraf": "^4.16.3"
